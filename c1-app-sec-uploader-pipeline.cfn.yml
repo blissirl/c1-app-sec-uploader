@@ -211,7 +211,7 @@ Resources:
                   - codecommit:GetUploadArchiveStatus
                   - codecommit:CancelUploadArchive
               - Resource:
-                  - !Sub arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/${PreScanBuild}
+                  - !Sub arn:aws:codebuild:::project/
                 Effect: Allow
                 Action:
                   - codebuild:StartBuild
@@ -219,7 +219,7 @@ Resources:
                   - codebuild:BatchGetProjects
                   - codebuild:BatchGetBuilds
                   - codebuild:ListBuildsForProject
-              - Resource: !Sub arn:aws:s3:::${CodePipelineArtifactBucket}/*
+              - Resource: !Sub arn:aws:s3:::/*
                 Effect: Allow
                 Action:
                   - s3:PutObject
@@ -244,7 +244,7 @@ Resources:
           PolicyDocument:
             Version: 2012-10-17
             Statement:
-              - Resource: !Sub arn:aws:iam::${AWS::AccountId}:role/${KubectlRoleName}
+              - Resource: !Sub arn:aws:iam:::role/
                 Effect: Allow
                 Action:
                   - sts:AssumeRole
@@ -258,7 +258,7 @@ Resources:
                   - logs:CreateLogGroup
                   - logs:CreateLogStream
                   - logs:PutLogEvents
-              - Resource: !Sub arn:aws:s3:::${CodePipelineArtifactBucket}/*
+              - Resource: !Sub arn:aws:s3:::/*
                 Effect: Allow
                 Action:
                   - s3:GetObject
@@ -325,11 +325,11 @@ Resources:
           - Name: SMARTCHECK_PWD
             Value: !Ref SmartcheckPwd
           - Name: EKS_KUBECTL_ROLE_ARN
-            Value: !Sub arn:aws:iam::${AWS::AccountId}:role/${KubectlRoleName}
+            Value: !Sub arn:aws:iam:::role/
           - Name: EKS_CLUSTER_NAME
             Value: !Sub ekscluster-eksctl
           - Name: REPOSITORY_URI
-            Value: !Sub ${AWS::AccountId}.dkr.ecr.us-east-1.amazonaws.com/${EcrDockerRepository}
+            Value: !Sub .dkr.ecr.us-east-1.amazonaws.com/
           - Name: APPSEC_KEY
             Value: !Ref AppSecKey
           - Name: APPSEC_SECRET
