@@ -1,0 +1,49 @@
+apiVersion: v1
+kind: Service
+metadata:
+  annotations:
+    service.alpha.kubernetes.io/tolerate-unready-endpoints: "true"
+  name: c1-app-sec-uploader
+  labels:
+    app: c1-app-sec-uploader
+spec:
+  type: LoadBalancer
+  ports:
+  - port: 80
+    name: c1-app-sec-uploader
+    targetPort: 80
+  selector:
+    app: c1-app-sec-uploader
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  labels:
+    app: c1-app-sec-uploader
+  name: c1-app-sec-uploader
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: c1-app-sec-uploader
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 1
+  template:
+    metadata:
+      labels:
+        app: c1-app-sec-uploader
+    spec:
+      containers:
+      - name: c1-app-sec-uploader
+        image: CONTAINER_IMAGE
+        imagePullPolicy: Always
+        env:
+        - name: TREND_AP_KEY
+          value: f0937cb3-684b-4bce-9291-29f67d3e4593
+        - name: TREND_AP_SECRET
+          value: 8b16dd6c-87f7-482f-bdb7-f144aa7b3590
+        ports:
+        - containerPort: 80

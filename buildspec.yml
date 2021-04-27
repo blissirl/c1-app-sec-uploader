@@ -1,0 +1,92 @@
+---
+version: 0.2
+phases:
+  install:
+    commands:
+      # Install aws-iam-authenticator and kubectl
+      - curl -sS -o aws-iam-authenticator https://amazon-eks.s3-us-west-2.amazonaws.com/1.12.7/2019-03-27/bin/linux/amd64/aws-iam-authenticator
+      - curl -sS -o kubectl https://storage.googleapis.com/kubernetes-release/release/$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)/bin/linux/amd64/kubectl
+      - chmod +x ./kubectl ./aws-iam-authenticator
+      - export PATH=${PWD}/:${PATH}
+
+      # Install jq
+      - apt-get update && apt-get -y install jq
+
+      # Install AWS CLI v2
+      - curl https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o ~/awscliv2.zip
+      - unzip -q ~/awscliv2.zip -d ~/
+      - ~/aws/install
+
+      # If using not publicly trusted certificates, we do a dynamic certificate trust
+      - >-
+        openssl s_client -showcerts -connect ${SMARTCHECK_HOST}:443 < /dev/null |
+        sed -ne '/-BEGIN CERTIFICATE-/,/-END CERTIFICATE-/p' > /usr/local/share/ca-certificates/${SMARTCHECK_HOST}.crt && update-ca-certificates
+
+  pre_build:
+    commands:
+      # - TAG="$REPOSITORY_NAME.$REPOSITORY_BRANCH.$ENVIRONMENT_NAME.$(date +%Y-%m-%d.%H.%M.%S).$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | head -c 8)"
+      - TAG="latest"
+
+      # Danymically set the image name in the deployment manifest
+      #- sed -i 's@{CONTAINER_IMAGE}@'"${REPOSITORY_URI}:${TAG}"'@' app-eks.yml
+      - sed -i 's@CONTAINER_IMAGE@'"$REPOSITORY_URI:${TAG}"'@' app-eks.yml
+      
+      # Set KUBECONFIG
+      - export KUBECONFIG=$HOME/.kube/config
+
+  build:
+    commands:
+      # Login Docker
+      - echo ${DOCKER_PASSWORD} | docker login --username ${DOCKER_USERNAME} --password-stdin
+
+      # Check Docker Hub rate limit
+      - TOKEN=$(curl  --user "${DOCKER_USERNAME}:${DOCKER_PASSWORD}" "https://auth.docker.io/token?service=registry.docker.io&scope=repository:ratelimitpreview/test:pull" | jq -r .token)
+      - echo $(curl --head -H "Authorization:Bearer ${TOKEN}" https://registry-1.docker.io/v2/ratelimitpreview/test/manifests/latest | grep -i rate)
+      
+      # Build the image
+      - docker build --tag ${REPOSITORY_URI}:${TAG} .
+
+      # Login to ECR
+      - >-
+        aws ecr get-login-password --region ${AWS_DEFAULT_REGION} | 
+        docker login --username AWS --password-stdin ${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_DEFAULT_REGION}.amazonaws.com
+
+  post_build:
+    commands:
+      # Smart Check Pre-Registry-Scan
+      - >-
+        docker run -v /var/run/docker.sock:/var/run/docker.sock
+        deepsecurity/smartcheck-scan-action
+        --image-name "${REPOSITORY_URI}:${TAG}"
+        --findings-threshold "{\"malware\":0,\"vulnerabilities\":{\"defcon1\":0,\"critical\":30,\"high\":100},\"contents\":{\"defcon1\":0,\"critical\":1,\"high\":1},\"checklists\":{\"defcon1\":0,\"critical\":0,\"high\":0}}"
+        --preregistry-host="${PRE_SCAN_REPOSITORY}:5000"
+        --smartcheck-host="${SMARTCHECK_HOST}"
+        --smartcheck-user="${SMARTCHECK_USER}"
+        --smartcheck-password="${SMARTCHECK_PWD}"
+        --insecure-skip-tls-verify
+        --preregistry-scan
+        --preregistry-user "${PRE_SCAN_USER}"
+        --preregistry-password "${PRE_SCAN_PWD}"
+
+      # Create Repository if not exists
+      - >-
+        aws ecr describe-repositories --repository-names ${REPOSITORY_URI##*/} ||
+        aws ecr create-repository --repository-name ${REPOSITORY_URI##*/} --image-scanning-configuration scanOnPush=true --region ${AWS_DEFAULT_REGION}
+
+      # Push to ECR
+      - docker push ${REPOSITORY_URI}:${TAG}
+      
+      # Update EKS KubeConfig
+      - CREDENTIALS=$(aws sts assume-role --role-arn ${EKS_KUBECTL_ROLE_ARN} --role-session-name codebuild-kubectl --duration-seconds 900)
+      - export AWS_ACCESS_KEY_ID="$(echo ${CREDENTIALS} | jq -r '.Credentials.AccessKeyId')"
+      - export AWS_SECRET_ACCESS_KEY="$(echo ${CREDENTIALS} | jq -r '.Credentials.SecretAccessKey')"
+      - export AWS_SESSION_TOKEN="$(echo ${CREDENTIALS} | jq -r '.Credentials.SessionToken')"
+      - export AWS_EXPIRATION=$(echo ${CREDENTIALS} | jq -r '.Credentials.Expiration')
+      - aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME}
+
+      # Deploy to EKS
+      - kubectl apply -f app-eks.yml
+      - printf '[{"name":"c1-app-sec-uploader","imageUri":"%s"}]' ${REPOSITORY_URI}:${TAG} > build.json
+
+artifacts:
+  files: build.json
